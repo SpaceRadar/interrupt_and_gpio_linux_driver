@@ -27,8 +27,9 @@ struct device_data_t
     int               busy;
     struct miscdevice dev;
     char              file_name[DEV_FILE_NAME_MAX_LENGTH];
-    int               gpio_pin;
-    int               gpio_active_low;
+//    int               gpio_pin;
+//    int               gpio_active_low;
+    struct gpio_desc* gpio;
 };
 
 
@@ -38,7 +39,7 @@ irqreturn_t test_isr(int irq, void* dev_id)
     printk(KERN_INFO DEVNAME":ISR %s\n",device_data->file_name);
     if(device_data)
     {
-      gpio_set_value(device_data->gpio_pin, 1 ^ device_data->gpio_active_low);
+      gpiod_set_value_cansleep(device_data->gpio, 1);
       device_data->irq_sign=1;
       wake_up_interruptible(&device_data->queue_irq);
     }
@@ -74,7 +75,7 @@ ssize_t read(struct file *filp, char __user *buf, size_t count, loff_t *f_pos)
         return -ERESTARTSYS;
       }
       device_data->irq_sign=0;
-      gpio_set_value(device_data->gpio_pin, 0 ^ device_data->gpio_active_low);
+      gpiod_set_value_cansleep(device_data->gpio, 0);
       wake_up_interruptible(&device_data->queue_busy);
       device_data->busy=0;
     }
@@ -97,9 +98,9 @@ ssize_t write(struct file *filp, const char __user *buf, size_t count, loff_t *f
     {
       switch(inner_buff)
       {
-        case('0'): gpio_set_value(device_data->gpio_pin, 0 ^ device_data->gpio_active_low); break;
-        case('1'): gpio_set_value(device_data->gpio_pin, 1 ^ device_data->gpio_active_low); break;
-        default  : result=-EFAULT;                                                          break;
+        case('0'): gpiod_set_value_cansleep(device_data->gpio, 0); break;
+        case('1'): gpiod_set_value_cansleep(device_data->gpio, 1); break;
+        default  : result=-EFAULT;                        break;
 
       }
     }
@@ -122,6 +123,10 @@ static int int_driver_probe(struct platform_device* pdev)
     struct resource* dev_resource;
     enum of_gpio_flags of_gpio_flags;
     unsigned long gpio_flags = GPIOF_OUT_INIT_LOW;
+
+    struct gpio_desc* gpio;
+
+
 
     printk(KERN_INFO DEVNAME": start probe\n");
 
@@ -169,6 +174,19 @@ static int int_driver_probe(struct platform_device* pdev)
     }
     device_data->file_name[idx]='\0';
 
+
+    device_data->gpio=devm_gpiod_get(&pdev->dev, NULL, 0);
+
+    if(!device_data->gpio)
+    {
+      printk(KERN_ERR DEVNAME": can not allocate gpio\n");
+      return -EIO;
+    }
+
+    gpiod_direction_output(device_data->gpio,1);
+
+
+#if 0
     device_data->gpio_pin=of_get_gpio(pdev->dev.of_node, 0);
     if(device_data->gpio_pin<0)
     {
@@ -204,7 +222,7 @@ static int int_driver_probe(struct platform_device* pdev)
     }
 
     gpio_direction_output(device_data->gpio_pin, device_data->gpio_active_low);
-
+#endif
     device_data->dev.minor=MISC_DYNAMIC_MINOR;
     device_data->dev.fops=&fops;
     device_data->dev.mode=0666;
@@ -235,7 +253,7 @@ static int int_driver_remove(struct platform_device* pdev)
     {
       misc_deregister(&device_data->dev);
 //      gpio_direction_input(device_data->gpio_pin);
-      gpio_free(device_data->gpio_pin);
+//      gpio_free(device_data->gpio_pin);
     }
     printk(KERN_INFO DEVNAME": %s successfully removed\n", device_data->file_name);
     platform_set_drvdata(pdev,NULL);
